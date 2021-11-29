@@ -1,0 +1,124 @@
+---
+title: "Biostats - Multiple Logistic Regression"
+subtitle: Rob Leonard (robleonard@tamu.edu)
+output:
+  html_document: default
+  pdf_document: default
+---
+# Cleveland Clinic: Heart Disease Dataset
+**1) Load data and categorize thal into 2 groups.**   
+```{r}
+origdata = read.csv("heart.csv", header=TRUE, sep = ",")   # read in original data
+names(origdata)[1] = "age"
+heartdata = data.frame(origdata)  # set up adjusted data set
+heartdata$thal = ifelse(heartdata$thal>2,0,1) 
+```
+**2) Scale the non binary/categorical variables.**
+```{r}
+heartdata$age = scale(heartdata$age)
+heartdata$trestbps = scale(heartdata$trestbps)
+heartdata$chol = scale(heartdata$chol)
+heartdata$thalach = scale(heartdata$thalach)
+heartdata$oldpeak = scale(heartdata$oldpeak)
+heartdata$ca = scale(heartdata$ca)
+```
+**3) Fit a logistic regression model using all 13 explanatory variables.**
+```{r}
+model1 = glm(target~., data = heartdata, family="binomial")
+summary(model1)
+```
+**4) Predict probability of disease for 3 values and determine 95% CI's.**
+```{r}
+page = c(68,75,78)
+psex = c(1,0,1)
+pcp = c(3,3,0)
+ptrestbps = c(145,145,144)
+pchol = c(233,150,193)
+pfbs = c(1,1,1)
+prestecg = c(0,0,1)
+pthalach = c(150,150,90)
+pexang = c(0,0,0)
+poldpeak = c(2.3,2.3,3.4)
+pslope = c(0,0,1)
+pca = c(0,0,2)
+pthal = c(0,1,0)
+pdata = data.frame(page,psex,pcp,ptrestbps,pchol,pfbs,prestecg,pthalach,pexang,poldpeak,pslope,pca,pthal)
+names(pdata)[1:13] = names(origdata)[1:13]
+# scale the data
+pdata$age = scale(pdata$age, center = mean(origdata$age), scale = sd(origdata$age))
+pdata$trestbps = scale(pdata$trestbps, center = mean(origdata$trestbps), scale = sd(origdata$trestbps))
+pdata$chol = scale(pdata$chol, center = mean(origdata$chol), scale = sd(origdata$chol))
+pdata$thalach = scale(pdata$thalach, center = mean(origdata$thalach), scale = sd(origdata$thalach))
+pdata$oldpeak = scale(pdata$oldpeak, center = mean(origdata$oldpeak), scale = sd(origdata$oldpeak))
+pdata$ca = scale(pdata$ca, center = mean(origdata$ca), scale = sd(origdata$ca))
+# predict
+pout = predict.glm(model1, newdata = pdata, se.fit=TRUE)
+1/(1+exp(-as.numeric(pout[[1]])))
+# confidence intervals
+ll=1/(1+exp(-(as.numeric(pout[[1]])-1.96*as.numeric(pout[[2]]))))
+ll
+ul=1/(1+exp(-(as.numeric(pout[[1]])+1.96*as.numeric(pout[[2]]))))
+ul
+```
+| Observation     | Estimated Probability have Disease | 95% Confidence Interval  |
+|-----------------|------------------------------------|--------------------------|
+| 1  | 0.395     | ( 0.129,0.741) |
+| 2  | 0.942     | ( 0.687, 0.992) |
+| 3  | 0.006     |  ( 0.0008, 0.050)  |
+
+**5) Check the adequecy of the model using the Hosmer-Lemeshow test.**
+The null hypothesis $H_0:$ is that the model fits the data well, versus the alternative hypothesis $H_a:$ that the model does not fit the data well.
+```{r}
+library(generalhoslem)
+logitgof(heartdata$target, fitted(model1))
+```
+The test statistic is 8.8059, using an approximate chi-squared distribution with 10 groups and 8 degrees of freedom.  The p-value is high at 0.359, so we do not have significant evidence to reject the null hypothesis that the model fits the data well.    
+However, at least one cell has an expected frequency of < 1 so the approximation may be incorrect.  If we use a g=5, the p-value is even higher, however with small g's, the HL test may not be able to detect a model mispecification.
+
+**6) Rerun the model using only the first and last 100 observations.**
+```{r}
+smallerdata = heartdata[c(1:100,204:303),]
+model1red = glm(target~., data = smallerdata, family="binomial")
+summary(model1red)
+```
+**7) Use the model in 6 to predict the test data and use cutoffs of .5, .6 and .7.**
+First, use the 0.5 cutoff:
+```{r}
+testdata = heartdata[c(101:203),]
+outtest = predict(model1red, newdata = testdata, type = "response")
+library(e1071)
+library(caret)
+confusionMatrix(data = as.factor(as.numeric(outtest>0.5)), reference = as.factor(testdata$target))
+```
+Now use the 0.6 cutoff:
+```{r}
+confusionMatrix(data = as.factor(as.numeric(outtest>0.6)), reference = as.factor(testdata$target))
+```
+Now use the 0.7 cutoff:
+```{r}
+confusionMatrix(data = as.factor(as.numeric(outtest>0.7)), reference = as.factor(testdata$target))
+```
+The results are fairly similar.  Using a cutoff value of 0.6 has the highest combination of sensitivity and specificity at 1.60, which is one measure of goodness of prediction shown in our lecture slides.  Using a cutoff value of 0.6 or 0.7 both get a higher sensitivity of 0.8158.  The cutoff of 0.5 results in a higher specificity value of 0.8462.  But we want both measures to be high (sensitivity = proportion of observed positives that were predicted positive, specificity = proportion of observed negatives predicted to be negative).
+
+
+**8) Draw ROC curve for test data in question 7.**
+```{r}
+library(pROC)
+roccurve = roc(testdata$target ~ outtest)
+roccurve
+plot(roccurve)  
+```
+  
+The AUC (area under the curve) is fairly high at 0.885.  Values above 0.7 indicate a model has moderate to good discriminatory power, so this model has good discriminatory power.  
+
+**9) Redo questions 6 and 8 but remove ca, cp and thal as explanatory variables. Evaluate discriminatory power of this new model.**
+```{r}
+model9red = glm(target~.-ca-cp-thal, data = smallerdata, family="binomial")
+summary(model9red)
+outtest9 = predict(model9red, newdata = testdata, type = "response")
+roccurve9 = roc(testdata$target ~ outtest9)
+roccurve9
+plot(roccurve9)  
+```
+  
+This reduced model has a reduced area under the ROC curve of 0.827 (as expected given fewer explanatory variables).  However, this is still well above our cutoff value of 0.7 which indicates a model with moderate to good discriminatory power.

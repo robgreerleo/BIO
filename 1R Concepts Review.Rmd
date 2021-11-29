@@ -1,0 +1,104 @@
+---
+title: 'R Concepts Review'
+subtitle: Rob Leonard (robleonard@tamu.edu) 
+output:
+  html_document: default
+---
+# 1) Income by Gender and Degree 
+**1a Create Box Plots**
+```{r}
+inc_deg_data <- read.csv("inc_deg_data.csv")
+attach(inc_deg_data)
+boxplot(income~interaction(gender,degree), data=inc_deg_data,
+        names=c("Female Arts","Male Arts","Female Science","Male Science"),
+        xlab="Gender & Degree", ylab="Income")
+```
+
+**1-b Report the mean, median, standard deviation, and first and third quartiles of income.**
+```{r}
+summary(income)
+cat("Standard Deviation of Income:", sd(income))
+```
+**1-c Repeat with income expressed in dollars (rather than 1,000’s of dollars).**
+```{r}
+summary(income*1000)
+cat("Standard Deviation of Income:", sd(income*1000))
+```
+**1-d Repeat excluding the minimum and maximum values**
+```{r}
+inc_deg_data <- inc_deg_data[order(income),]
+summary(inc_deg_data$income[2:99]*1000)
+cat("Standard Deviation of Income excl. min/max:", sd(inc_deg_data$income[2:99]*1000))
+detach(inc_deg_data)
+```
+
+# 2) Normal Distribution
+**2a Simulate normal distribution values (100x5) and report the column means**
+```{r}
+set.seed(101)
+Mat2 <- matrix(rnorm(500),nrow=100)
+Mat2means <- apply(Mat2,2,mean)
+Mat2means
+```
+**Redo using Matrix/Vector Arithmetic**
+```{r}
+vect1 <- rep(1,100)
+Mat2ameans <- (1/100)*(vect1%*%Mat2) 
+Mat2ameans
+```
+**2b Histogram of the row ranges**
+```{r}
+Mat2range <- apply(Mat2,1,max)-apply(Mat2,1,min)
+hist(Mat2range, main="Histogram of Ranges", xlab="Range")
+```
+
+# 3) Gamma Distribution
+**Histogram of Gamma Distribution Simulation with Overlayed Normal Distribution**
+```{r}
+par(mfrow=c(1,3))
+HistGam <- function(n,nreps=1000,gshape=2,gscale=2) {
+  gmean=gshape*gscale
+  gvar=gshape*gscale*gscale
+  temp<-rep(0,nreps)
+  for (i in 1:nreps) temp[i]=mean(rgamma(n,shape=gshape,scale=gscale))
+  hist(temp,probability=TRUE,xlab="Mean",main=paste("Histogram n=",n),
+       breaks ="Sturges",ylim=c(0,1.4) )
+  xnorm <- seq(min(temp),max(temp),length=nreps+1)
+  lines(xnorm,dnorm(xnorm,mean=gmean,sd=sqrt(gvar/n)),col=4,lwd=2)
+  }
+HistGam(n=10) 
+HistGam(n=30) 
+HistGam(n=90)  
+```
+
+# Matrix Algebra in R
+**4a Create matrices A and B and calculate column sums of A**
+```{r}
+set.seed(101)
+A <- matrix(c(rnorm(12),runif(8,min=-2,max=2)),nrow=5,ncol=4,byrow=TRUE)
+set.seed(102)
+B <- matrix(rbeta(20,2,1),nrow=5,ncol=4,byrow=TRUE)
+colSums(A)
+```
+**4b Calculate A+B and display certain elements**
+```{r}
+C<- A+B
+C[4,2]
+C[4,4]
+```
+**4c Matrix Multiplication and Transpose**
+```{r}
+D <- A%*%t(B) 
+D[4,2]
+D[4,4]
+```
+**4d Matrix inverse and determinants**
+```{r}
+E <- t(B)%*%A
+solve(E)
+det(E)
+```
+
+
+
+

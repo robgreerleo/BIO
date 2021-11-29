@@ -1,0 +1,146 @@
+---
+title: "Biostats - Cox Proportional Hazard"
+subtitle: Rob Leonard (robleonard@tamu.edu)
+output:
+  html_document: default
+  pdf_document: default
+---
+# 1) Monoclonal Gammopathy of Undetermined Significance Dataset
+**1a) Fit a proportional hazard model and test if age has an association at 5% level.**  
+```{r}
+library(survival)
+data(mgus)
+mgusdata <- mgus[,c(2,3,7,8,9,10,11)]  # only pull data we need
+mgusdata <- mgusdata[complete.cases(mgusdata), ]   # remove any missing data
+outmgus <- coxph(Surv(futime, death)~age+sex+alb+creat+hgb, data = mgusdata)
+summary(outmgus)  
+```
+$H_0: \beta_{age}=0$ vs. $H_a: \beta_{age}\ne0$.  
+Test Statistic: z = 0.070350/0.008555 = 8.223 which is very high.  The p-value is very low at 2e-16.
+Thus, we have significant evidence to reject the null hypothesis that age does not have any association with the hazard.    
+
+**1b) Estimate relative risk and its 95% CI for the death of a subject with the age of diagnosis 60 compared to the subject with the age of diagnosis 50 while all other covariates remain unchanged. **  
+The relative risk is $(\frac{exp^{60*.07035}}{exp^{50*.07035}})$ = **2.02.**  
+So, the relative risk of death for a 60 year old subject at diagnosis is **2 times higher** than that of a 50 year old, holding the other covariates constant.  
+
+The 95% CI is 2.02+-(1.96)(0.1728903) = **(1.681,2.359).**
+```{r}
+library(msm)
+sestar = deltamethod(~(exp(60*x1)/exp(50*x1)), 0.070350, outmgus$var[1,1])
+sestar
+```
+
+
+
+**1c) Test if there is any effect of gender, albumin, and hemoglobin at the 5% level.**  
+```{r}
+outH0 <- coxph(Surv(futime, death)~age+creat, data = mgusdata)
+anova(outH0, outmgus)  
+```
+$H_0: \beta_{sex} = \beta_{albumin} = \beta_{hemoglobin}= 0$ versus $H_a:$ at least one coefficient is nonzero.  
+The chi squared test statistic is 7.3248 resulting in a p-value of 0.06224, which, if using a 5% test, does not provide sufficient evidence to reject the null hypothesis that there is no association of gender, albumin and hemoglobin on time to death.  
+
+**1d) obtain the estimate and 95% CI for the 10 year survival probability.**   
+First Person:  
+```{r}
+out1d1 = survfit(outmgus, newdata=data.frame(age=60, sex="male", alb=3, creat=1, hgb=13.5 ))
+index1 = findInterval(3650,out1d1$time)
+out1d1$surv[index1]
+c(out1d1$lower[index1],out1d1$upper[index1]) 
+```
+Second Person:  
+```{r}
+out1d2 = survfit(outmgus, newdata=data.frame(age=60, sex="male", alb=3, creat=4, hgb=13.5 ))
+index2 = findInterval(3650,out1d2$time)
+out1d2$surv[index2]
+c(out1d2$lower[index2],out1d2$upper[index2])  
+```
+| Estimate  | 95% Confidence Interval  |   
+|---|---|
+| **Person 1**  |   |      
+|  0.696  | (0.615,0.787) | 
+| **Person 2**  |   | 
+|  0.294  | (0.099,0.868) |  
+
+**1e) Repeat d but include 2 factor interactions and choose model with stepwise selection.**  
+```{r}
+library(My.stepwise)
+mgusdata2 = model.matrix( ~.^2, data = mgusdata)
+mgusdata2 = mgusdata2[,c(-1,-10,-11,-15,-16,-20:-26)]  # drop the intercept and interactions with death and time
+mgusdata2 = data.frame(mgusdata2)
+my.variable.list = names(mgusdata2)
+my.variable.list = my.variable.list[c(-3,-4)]
+My.stepwise.coxph(Time="futime", Status="death", variable.list=my.variable.list, data=mgusdata2)  
+```
+Predict for person 1:  
+```{r}
+out1e <- coxph(Surv(futime, death)~age+age.creat+alb.hgb, data = mgusdata2)
+out1e1 = survfit(out1e, newdata=data.frame(age=60, sex="male", alb=3, creat=1, hgb=13.5, age.creat=60,alb.hgb=40.5  ))
+index1e = findInterval(3650,out1e1$time)
+out1e1$surv[index1e]
+c(out1e1$lower[index1e],out1e1$upper[index1e]) 
+```
+Predict for person 2:    
+```{r}
+out1e2 = survfit(out1e, newdata=data.frame(age=60, sex="male", alb=3, creat=4, hgb=13.5, age.creat=240,alb.hgb=40.5  ))
+index1e2 = findInterval(3650,out1e2$time)
+out1e2$surv[index1e2]
+c(out1e2$lower[index1e2],out1e2$upper[index1e2])
+```
+| Estimate  | 95% Confidence Interval  |   
+|---|---|
+| **Person 1**  |   |      
+|  0.710  | (0.642,0.785) | 
+| **Person 2**  |   | 
+|  0.353  | (0.168,0.745) |    
+These results are fairly similar to part 1d, except the survival probability estimate for person 2 is higher in part e and has a narrower confidence interval.  
+
+  
+# 2) Colon Cancer Dataset
+```{r}
+library(survival)
+data(colon)
+colondata = colon[colon$etype==2, c(1,9,10,12,15)] # want to look at etype =2 deaths now (not recurrence of disease)
+colondata$time2 = round(colondata$time/91.25,0)
+#colondata$time2 = floor(colondata$time/91.25)  # Discussion board has floor or round as valid options for calculating which quarter
+out2a = glm(status ~ as.factor(time2)+nodes+as.factor(extent), family='binomial', data=colondata)
+summary(out2a) # doesn't work that well, don't have many events in most time periods in quarter 26 on, highish standard errors, higher AIC
+table(colondata$time2[colondata$time2>=20],colondata$status[colondata$time2>=20])
+```
+  
+**Employ Method 2 - Quadratic Function for Time:**    
+```{r}
+colondata$time2cen = colondata$time2-mean(colondata$time2)  # first we need to mean center
+out2 = glm(status~time2cen+I(time2cen^2)+nodes+as.factor(extent), family=binomial, data=colondata)  # quadratic model
+summary(out2)
+```
+  
+**Now predict Survival Probability and Calc 95% CI's given nodes=2 and extent=muscle:  **  
+```{r}
+predicttime = c(4,8,12,16,20,24)-mean(colondata$time2)  # need to take into account mean centering for predict time periods too
+eta=predict(out2, newdata=data.frame(time2cen=predicttime,nodes=2, extent=2), se.fit=TRUE)
+prob = 1/(1+exp(-eta[[1]]))
+round(prob,4)
+probcihi = 1/(1+exp(-eta[[1]]-1.96*eta[[2]]))
+probcilow = 1/(1+exp(-eta[[1]]+1.96*eta[[2]]))
+round(probcilow,4)
+round(probcihi,4)
+```
+    
+| Quarter  | Estimate  | 95% Confidence Interval  |   
+|---|---|---|
+| 4 | 1.0000  | (0.9997,1.0000) |      
+| 8 | 0.9998  | (0.9968,1.0000) |
+| 12 | 0.9934  | (0.9688,0.9986) |
+| 16 | 0.8988  | (0.7788,0.9573) |
+| 20 | 0.4799  | (0.3144,0.6499) |
+| 24 | 0.1437  | (0.0798,0.2451) |  
+  
+**Report Summary:**  
+Given that we have interval censored data (using quarters instead of days) and many ties for uncensored event data, I first ran the model using method 1 for interval data in the slides using time as a factor variable.  Some issues with doing this are that we don't have a lot of events, especially beyond time period 26, so the standard errors were somewhat high resulting in unreasonable estimates, and we also get a large number of model parameters.  Also, the AIC is higher at 412.8 when compared to running method 2, using the quadratic function for time instead of using time as a factor variable.  
+  
+I then reran the analysis using time as a quadratic function.  This results in a model with fewer parameters and a lower AIC of 388.5.  The estimates for the survival probability and the 95% CI's for each of the listed quarters is shown in the table above (given nodes=2 and extent = muscle).  
+
+Notes:   
+1) I used etype==2 as the initial data filter criteria as we are looking at survival/deaths, rather than simply recurrence of disease.  
+2) The time variable was mean centered and the round function was used to assign the appropriate quarter (rather than the floor function). If we used floor to assign the quarters, the values in the table above would be slightly to modestly lower than shown.  

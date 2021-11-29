@@ -1,0 +1,198 @@
+---
+title: "Biostats - Parametric Survival"
+subtitle: Rob Leonard (robleonard@tamu.edu)
+output:
+  html_document: default
+  pdf_document: default
+---
+# 1) Prednisolone Data
+**1a) Fit best model and derive percentile formula.**  
+```{r}
+library(survival)
+myv <- c(2,6,12,54,56,68,89,96,96,125,128,131,140,141,143,145,146,148,162,168,173,181,
+         2,3,4,7,10,22,28,29,32,37,40,41,54,61,63,71,127,140,146,158,167,182)
+mydel <- c(1,1,1,1,0,1,1,1,1,0,0,0,0,0,1,0,1,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+           0,0,0,0,0,0)
+mycov <- c(rep(1,22),rep(0,22))
+mydata <- data.frame(myv, mydel, mycov)
+names(mydata) <- c("time","mystatus","mycov")
+head(mydata)
+out1 <- survreg(Surv(time,mystatus) ~ mycov, data = mydata, dist="lognormal")
+out2 <- survreg(Surv(time,mystatus) ~ mycov, data = mydata, dist="exponential")
+out3 <- survreg(Surv(time,mystatus) ~ mycov, data = mydata, dist="weibull")
+extractAIC(out1)  # lowest AIC at 319
+extractAIC(out2)
+extractAIC(out3)
+```
+The log-normal model is the best choice, as it has the minimum AIC value (319.43).
+inf{t: pr(T>t|$X_*$)} = inf(t: S(t) $\le$ 1-p)  
+$1-\phi(\frac{log(t)-\beta_0-X_0^T\beta_1}{\sigma}) = (1-p)$   
+$\phi(\frac{log(t)-\beta_0-X_0^T\beta_1}{\sigma}) = (p)$   
+$(\frac{log(t)-\beta_0-X_0^T\beta_1}{\sigma}) = \phi^{-1}(p)$  
+$log(t)-\beta_0-X_0^T\beta_1 = (\sigma)\phi^{-1}(p)$  
+$log(t) = (\sigma)\phi^{-1}(p)+\beta_0+X_0^T\beta_1$  
+$t = e^{(\sigma)\phi^{-1}(p)+\beta_0+X_0^T\beta_1}$  
+
+**1b) Estimate the above three percentiles and obtain the 95% CI for the percentiles for the two groups separately. **
+```{r}
+(sm1 <- summary(out1))
+```
+Group 1: Treatment with Pred
+```{r}
+library(msm)
+qvec <- c(qnorm(.25),qnorm(0.5),qnorm(.75))
+estimate <- ll <- ul <-  rep(0,3)
+
+for (i in 1:3){
+ estimate[i] <- exp(sm1$scale*qvec[i]+sm1$coefficients[1]+sm1$coefficients[2]) 
+ tempest <- estimate[i]
+ sestar <- deltamethod(~(log(tempest)-x1-x2)/exp(x3),c(sm1$coefficients[1],sm1$coefficients[2],log(sm1$scale)),out1$var)
+ 
+  
+ll[i] <- estimate[i] - 1.96*sestar
+ul[i] <- estimate[i] + 1.96*sestar
+
+}
+print(c("Estimate = ", round(estimate,2), "Lower =", round(ll,2), "Upper = ", round(ul,2)))
+```
+Group 2: Control Group
+```{r}
+qvecC <- c(qnorm(.25),qnorm(0.5),qnorm(.75))
+estimateC <- llC <- ulC <-  rep(0,3)
+
+for (i in 1:3){
+ estimateC[i] <- exp(sm1$scale*qvec[i]+sm1$coefficients[1]+sm1$coefficients[2]*0) 
+ tempest <- estimate[i]
+ sestar <- deltamethod(~(log(tempest)-x1-x2*0)/exp(x3),c(sm1$coefficients[1],sm1$coefficients[2],log(sm1$scale)),out1$var)
+ 
+  
+llC[i] <- estimateC[i] - 1.96*sestar
+ulC[i] <- estimateC[i] + 1.96*sestar
+
+}
+print(c("Estimate = ", round(estimateC,2), "Lower =", round(llC,2), "Upper = ", round(ulC,2)))
+```
+  
+**1c) Redo 1b with non parametric method**
+```{r}
+datatreat = mydata[mydata$mycov==1,]  # split data set by treatment and control
+datacontr = mydata[mydata$mycov==0,]
+# treatment group
+treatFit <- survfit(Surv(datatreat$time,datatreat$mystatus)~1)
+quantile(treatFit, prob=c(0.25, 0.5, 0.75), conf.int=TRUE)
+```
+```{r}
+# control group
+contrFit <- survfit(Surv(datacontr$time,datacontr$mystatus)~1)
+quantile(contrFit, prob=c(0.25, 0.5, 0.75), conf.int=TRUE)
+```
+  
+  
+The non-parametric method struggles here due to the small sample size for each group. Several of the bound values are returned as NA. The parametric methods are more useful for this dataset.    
+
+# 2) Colon Data
+**2a) Set up colon cancer data.  Choose best model using stepwise and AIC then BIC.**
+```{r}
+data(colon)
+colondata <- colon[colon$etype==1,]  # exclude subjects who died (unknown reason)
+colondata$differ <- as.factor(colondata$differ) # change variable to factor
+colondata$extent <- as.factor(colondata$extent)
+colondata <- colondata[complete.cases(colondata),] # only look at complete data
+nrowcolon = nrow(colondata)
+outf <- survreg(Surv(time,status) ~ sex+age+perfor+adhere+nodes+differ+extent+
+        sex*age+sex*perfor+sex*adhere+sex*nodes+sex*differ+sex*extent+
+        age*perfor+age*adhere+age*nodes+age*differ+age*extent+
+        perfor*adhere+perfor*nodes+perfor*differ+perfor*extent+
+        adhere*nodes+adhere*differ+adhere*extent+
+        nodes*differ+nodes*extent+differ*extent, data=colondata, dist="weibull")
+library(MASS)
+out1bothAIC <- step(outf, k=2, trace=F)  # AIC
+summary(out1bothAIC)
+```
+BIC method
+```{r}
+out1bothBIC <- step(outf, k=log(nrowcolon), trace=F)  # BIC
+summary(out1bothBIC)
+```
+**2b)CI for survival based on given data.**
+AIC model (skip BIC per discussion board):
+```{r}
+Xaic <- matrix(c(1,	60,	0,	0,	2,	1,	0,	0,	1,	0,	60,	0,	2,	0,	1,	0,	0,	0,	60,	0,	0,	0,	0,	2,	0,
+1,	60,	0,	1,	2,	1,	0,	0,	1,	0,	60,	0,	2,	0,	1,	0,	0,	60,	60,	0,	0,	2,	0,	2,	0,
+1,	60,	1,	0,	2,	1,	0,	0,	1,	0,	60,	1,	2,	0,	1,	0,	60,	0,	60,	0,	2,	0,	0,	2,	0,
+1,	60,	1,	1,	2,	1,	0,	0,	1,	0,	60,	1,	2,	0,	1,	0,	60,	60,	60,	0,	2,	2,	0,	2,	0,
+0,	60,	0,	0,	2,	1,	0,	0,	1,	0,	0,	0,	0,	0,	0,	0,	0,	0,	60,	0,	0,	0,	0,	2,	0,
+0,	60,	0,	1,	2,	1,	0,	0,	1,	0,	0,	0,	0,	0,	0,	0,	0,	60,	60,	0,	0,	2,	0,	2,	0,
+0,	60,	1,	0,	2,	1,	0,	0,	1,	0,	0,	0,	0,	0,	0,	0,	60,	0,	60,	0,	2,	0,	0,	2,	0,
+0,	60,	1,	1,	2,	1,	0,	0,	1,	0,	0,	0,	0,	0,	0,	0,	60,	60,	60,	0,	2,	2,	0,	2,	0),nrow=8, ncol=25, byrow = TRUE)
+colnames(Xaic) <- c('sex',	'age',	'perfor',	'adhere',	'nodes',	'differ2',	'differ3',	'extent2',	'extent3',	'extent4',	'sex:age',	'sex:perfor',	'sex:nodes',	'sex:extent2',	'sex:extent3',	'sex:extent4',	'age:perfor',	'age:adhere',	'age:differ2',	'age:differ3',	'perfor:nodes',	'adhere:nodes',	'nodes:extent2',	'nodes:extent3',	'nodes:extent4')
+# now get survival probability estimates
+timevec <- c(365, 730, 1095, 1460, 1825)
+Baic <- as.matrix(out1bothAIC$coefficients)
+Baic <- Baic[-1]   # remove intercept
+XBaic <- rep(0,8)
+for (i in 1:8) {
+XBaic[i] <- t(Xaic[i,])%*%(Baic)
+}
+resultsAIC <- matrix(rep(0,40), nrow=8, ncol=5)
+intaic <- as.numeric(out1bothAIC$coef[1]) 
+alphaaic <- as.numeric(out1bothAIC$scale)
+for (i in 1:5){
+  for (j in 1:8){
+   resultsAIC[j,i] <- exp(-(timevec[i]*exp(-XBaic[j]-intaic))^(1/alphaaic) )
+  }
+}
+#resultsAIC  # survival probabilities for times 1 to 5 in the time list given
+
+# delta method to get std error
+sebicAIC <- matrix(rep(0,40),nrow=8,ncol=5)
+coefAIC <- c(as.numeric(out1bothAIC$coefficients),0.2971)
+
+for (t in 1:5){
+  for (r in 1:8){
+    l01 = Xaic[r,1]; l02 = Xaic[r,2]; l03 = Xaic[r,3]; l04 = Xaic[r,4]; l05 = Xaic[r,5]; l06 = Xaic[r,6]; l07 = Xaic[r,7];
+    l08 = Xaic[r,8]; l09 = Xaic[r,9]; l10 = Xaic[r,10]; l11 = Xaic[r,11]; l12 = Xaic[r,12]; l13 = Xaic[r,13]; l14 = Xaic[r,14];
+    l15 = Xaic[r,15]; l16 = Xaic[r,16]; l17 = Xaic[r,17]; l18 = Xaic[r,18]; l19 = Xaic[r,19]; l20 = Xaic[r,20];
+    l21 = Xaic[r,21]; l22 = Xaic[r,22]; l23 = Xaic[r,23]; l24 = Xaic[r,24]; l25 = Xaic[r,25];
+  sebicAIC[r,t] <- deltamethod(~(-l01*x2-l02*x3-l03*x4-l04*x5-l05*x6-l06*x7-l07*x8-l08*x9-l09*x10-l10*x11-l11*x12-l12*x13-
+                                  l13*x14-l14*x15-l15*x16-l16*x17-l17*x18-l18*x19-l19*x20-l20*x21-l21*x22-l22*x23-l23*x24-
+                                  l24*x25-l25*x26-x1+log(365))*exp(-x27),coefAIC, out1bothAIC$var)
+}
+}
+#sebicAIC # estimated survival probabilities given time period 1 to 5 listed in problem
+
+ulbicAIC <- matrix(rep(0,40),nrow=8,ncol=5)
+llbicAIC <- matrix(rep(0,40),nrow=8,ncol=5)
+for (t in 1:5){
+  for (r in 1:8){
+    ulbicAIC[r,t] <- exp( -exp((-XBaic[r]-out1bothAIC$coef[1]+log(timevec[t]))*(1/out1bothAIC$scale)-1.96*sebicAIC[r,t]))
+    llbicAIC[r,t] <- exp( -exp((-XBaic[r]-out1bothAIC$coef[1]+log(timevec[t]))*(1/out1bothAIC$scale)+1.96*sebicAIC[r,t]))
+  }
+}
+```
+**Estimated Survival Probability for each of the 5 time periods and for all 8 observations:**
+```{r}
+resultsAIC
+```
+**Upper Bound of the 95% Confidence Interval for each of the 5 time periods and 8 observations:**
+```{r}
+ulbicAIC  # upper bound for 95% CI by observations in rows and time period in columns
+```
+
+**Lower Bound of the 95% Confidence Interval for each of the 5 time periods and 8 observations:**
+```{r}
+llbicAIC  # lower bound for 95% CI by observations in rows and time period in columns
+```
+
+**2c) Log Likelihood tests.**
+```{r}
+outfull2c <- survreg(Surv(time,status) ~ age+sex+rx+nodes+age*sex+age*rx+age*nodes+
+                       sex*rx+sex*nodes+rx*nodes, data=colondata, dist="weibull")
+outred2c <- survreg(Surv(time,status) ~ sex+rx+nodes+sex*rx+sex*nodes+rx*nodes, data=colondata, dist="weibull")
+mytest <- as.numeric(-2*(logLik(outred2c)-logLik(outfull2c)))
+print(mytest)
+df1 <- df.residual(outred2c)-df.residual(outfull2c)
+1-pchisq(mytest,df1)
+```
+$H_0: \beta_{age}=\beta_{age*sex}=\beta_{age*treat}=\beta_{age*nodes}=0$ vs. $H_a:$ at least one is nonzero.
+The test statistic is 12.473 and the p-value is 0.0288.  The test statistic has a chi-squared distribution with degrees of freedom = 5 (the # of coefficients removed from the full model).  The high test statistic and low p-value are sufficient evidence to reject the null hypothesis that age does not have a statistically significant effect on the time-to-event.  

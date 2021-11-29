@@ -1,0 +1,165 @@
+---
+title: "Biostats - Causal Inference"
+subtitle: Rob Leonard (robleonard@tamu.edu)
+output:
+  html_document: default
+  pdf_document: default
+---
+# 1)  Real Earnings
+There are 2 sets of assumptions:
+First, the assumptions for valid linear regression:
+The response and the explanatory variables are linearly related.  
+Residuals are iid Normal (0,$\sigma^2$) where the variance is constant.    
+  
+Second, the assumptions for **causality:**  
+**Consistency:** the counter factual outcomes are partially known, and we have response data for both the treatment and non treatment group.  
+**Exchangeability:** the counter factual outcomes and assignment of exposure are independent conditional on the confounder.  
+**Positivity:** Both pr(X=1|Z=z) and pr(X=0|Z=z) are positive for every value of z.    
+
+```{r}
+library(qte)
+data(lalonde)
+mydata1           = lalonde.exp.panel
+mydata1$y        = log(1+mydata1$re)   # set up log of real earnings - but we have some with 0 wages so use 1+re.  
+lm1               = lm(re~treat+age+education+black+hispanic+married+nodegree+treat*age+treat*education+
+                         treat*black+treat*hispanic+treat:married+treat:nodegree, data=mydata1)
+summary(lm1)
+# calculate average treatment effect
+mydata1x1         = mydata1
+mydata1x1$treat   = 1
+yhat1             = predict(lm1,newdata=mydata1x1)
+mydata1x0         = mydata1
+mydata1x0$treat   = 0
+yhat0             = predict(lm1,newdata=mydata1x0)
+ATE1              = yhat1 - yhat0
+mean(ATE1)
+# get std error of the treatment effect and a 95% CI using the bootstrap method
+B                 = 10000
+n                 = 1335
+ATEboot           = rep(0,1335)
+
+for (b in 1:B){
+  bootdata1       = mydata1x1[sample(nrow(mydata1x1), n, replace=TRUE),]
+  bootdata0       = mydata1x0[sample(nrow(mydata1x0), n, replace=TRUE),]
+  treat1          = predict(lm1, newdata=bootdata1)
+  treat0          = predict(lm1, newdata=bootdata0)
+  ATEboot[b]      = mean(treat1-treat0)
+}
+ATEboot           = sort(ATEboot)
+ATEboot[250]
+ATEboot[9750]
+```
+The estimated average treatment effect (increase in real earnings after participating in the training program vs. not participating) is **$548.49**, and the 95% CI is **(`r ATEboot[250]`, `r ATEboot[9750]`).**    
+  
+# 2) Chemotherapy and Survival  
+IPTW Method First  
+```{r}
+# setup the data
+library(stdReg)
+library(AF)
+library(survival)
+data(rott2)
+mydata2          = rott2
+mydata2$chemoind = as.numeric(rott2$chemo=="yes")  # set up yes as 1 for treatment
+mydata2$lpr      = log(1+mydata2$pr)
+mydata2$ler      = log(1+mydata2$er)
+# calculate the weights using IPTW
+out2             = glm(chemoind~factor(meno)+factor(size)+factor(grade)+nodes+lpr+ler, family = binomial, data=mydata2)
+summary(out2)
+esttreatprob     = 1/(1+exp(-out2$linear.predictors))
+our.wt           = mydata2$rfi/esttreatprob + (1-mydata2$rfi)/(1-esttreatprob)
+summary(our.wt)
+sum(our.wt)  # so a max 49 weighting is well less than 1%, weights seem valid.
+
+# calculate the survival - first for the treatment group
+km.IPTW.tr       = survfit(with(mydata2, Surv(rf, rfi))~1, data=mydata2, subset=(chemoind==1), weights=our.wt)
+print(km.IPTW.tr, print.rmean=TRUE)
+
+# control group   
+km.IPTW.con      = survfit(with(mydata2, Surv(rf, rfi))~1, data=mydata2, subset=(chemoind==0), weights=our.wt)
+print(km.IPTW.con, print.rmean=TRUE)
+
+# add bootstrap to get 95% CI
+n                = nrow(mydata2)
+B                = 200
+boot.mean.tr     = boot.median.tr = boot.mean.con = boot.median.con = rep(0,200)
+for (b in 1:B){
+  bootdata           = mydata2[sample(nrow(mydata2), n, replace=TRUE),]
+  maxtime            = max(bootdata$rf)
+  # get propensity scores and weights
+  bootout2           = glm(chemoind~factor(meno)+factor(size)+factor(grade)+nodes+lpr+ler, family = binomial,                                      data=bootdata)
+  bootesttreatprob   = 1/(1+exp(-bootout2$linear.predictors))
+  boot.wt            = bootdata$rfi/bootesttreatprob + (1-bootdata$rfi)/(1-bootesttreatprob)
+  # estimate mean and median survival times
+  boot.km.tr         = survfit(with(bootdata, Surv(rf, rfi))~1, data=bootdata, subset=(chemoind==1),                                                 weights=boot.wt)
+  boot.mean.tr[b]    = survival:::survmean(boot.km.tr, rmean=maxtime)[[1]]["*rmean"]
+  boot.median.tr[b]  = quantile(boot.km.tr, prob = 0.5)[1]
+  boot.km.con        = survfit(with(bootdata, Surv(rf, rfi))~1, data=bootdata, subset=(chemoind==0),                                               weights=boot.wt)
+  boot.mean.con[b]   = survival:::survmean(boot.km.con, rmean=maxtime)[[1]]["*rmean"]
+  boot.median.con[b] = quantile(boot.km.con, prob = 0.5)[1]
+}
+boot.median.tr  = unlist(boot.median.tr)  # unlist the median values
+boot.median.con = unlist(boot.median.con)
+
+trteff.mean     = boot.mean.tr-boot.mean.con
+trteff.median   = boot.median.tr-boot.median.con
+trteff.mean     = sort(trteff.mean)
+trteff.mean[5]
+trteff.mean[195]
+trteff.median   = sort(trteff.median)
+trteff.median[5]
+trteff.median[195]
+```
+Using the IPTW method, the **mean** survival time for **chemo** patients was **66 months** and for **non chemo** patients was **49 months.**  The average treatment effect on the mean survival time for taking chemo is 17 months with a **95% confidence interval of (`r trteff.mean[5]`, `r trteff.mean[195]`).**  
+
+The **median** survival time for **chemo** patients was **46.7 months** and for **non chemo** patients was **36 months.**  The average treatment effect on the median survival time for taking chemo was 10.7 months with a **95% CI of (`r trteff.median[5]`, `r trteff.median[195]`)**.
+
+  
+**Now use CBPS Method**  
+```{r}
+library(CBPS)
+out2CBPS       = CBPS(chemoind~factor(meno)+factor(size)+factor(grade)+nodes+lpr+ler, data=mydata2)
+balance(out2CBPS)
+# there are some unbalanced confounders, so rerun with new weightings
+km.CBPS.tr     = survfit(with(mydata2, Surv(rf, rfi))~1, data=mydata2, subset=(chemoind==1), 
+                     weights=out2CBPS$weights)
+print(km.CBPS.tr, print.rmean=TRUE)
+km.CBPS.con    = survfit(with(mydata2, Surv(rf, rfi))~1, data=mydata2, subset=(chemoind==0), 
+                     weights=out2CBPS$weights)
+print(km.CBPS.con, print.rmean=TRUE)
+
+# Run bootstrap to get 95% CI's
+n                      = nrow(mydata2)
+B                      = 200
+boot.mean.trCB         = boot.median.trCB = boot.mean.conCB = boot.median.conCB = rep(0,200)
+for (b in 1:B){
+  bootdataCB           = mydata2[sample(nrow(mydata2), n, replace=TRUE),]
+  maxtime              = max(bootdata$rf)
+  # get weights
+  bootout2CB           = CBPS(chemoind~factor(meno)+factor(size)+factor(grade)+nodes+lpr+ler, data=bootdataCB)
+  boot.wtCB            = bootout2CB$weights
+  # estimate mean and median survival times
+  boot.km.trCB         = survfit(with(bootdataCB, Surv(rf, rfi))~1, data=bootdataCB, subset=(chemoind==1),                                           weights=boot.wtCB)
+  boot.mean.trCB[b]    = survival:::survmean(boot.km.trCB, rmean=maxtime)[[1]]["*rmean"]
+  boot.median.trCB[b]  = quantile(boot.km.trCB, prob = 0.5)[1]
+  boot.km.conCB        = survfit(with(bootdataCB, Surv(rf, rfi))~1, data=bootdataCB, subset=(chemoind==0),                                           weights=boot.wtCB)
+  boot.mean.conCB[b]   = survival:::survmean(boot.km.conCB, rmean=maxtime)[[1]]["*rmean"]
+  boot.median.conCB[b] = quantile(boot.km.conCB, prob = 0.5)[1]
+}
+boot.median.trCB       = unlist(boot.median.trCB)  # unlist the median values
+boot.median.conCB      = unlist(boot.median.conCB)
+
+trteff.meanCB          = boot.mean.trCB-boot.mean.conCB
+trteff.medianCB        = boot.median.trCB-boot.median.conCB
+trteff.meanCB          = sort(trteff.meanCB)
+trteff.meanCB[5]
+trteff.meanCB[195]
+trteff.medianCB        = sort(trteff.medianCB)
+trteff.medianCB[5]
+trteff.medianCB[195]
+```
+  
+Using the **CBPS** method, the **mean** survival time for **chemo** patients was **101.2 months** and for **non chemo** patients was **105 months.**  The average treatment effect on the mean survival time for taking chemo is **-3.8 months** with a **95% confidence interval of (`r trteff.meanCB[5]`, `r trteff.meanCB[195]`).**  
+
+The **median** survival time for **chemo** patients was **73.7 months** and for **non chemo** patients was **68 months.**  The average treatment effect on the median survival time for taking chemo was **5.7 months** with a **95% CI of (`r trteff.medianCB[5]`, `r trteff.medianCB[195]`)**.
+
